@@ -1,14 +1,23 @@
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 import json
 import re
 
-# Load products
-try:
-    with open("products.json", "r") as f:
-        products = json.load(f)
-except FileNotFoundError:
-    print("❌ products.json not found!")
-    exit()
-    
+app = FastAPI()
+
+# Enable access from your website
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Load products on startup
+with open("products.json", "r") as f:
+    products = json.load(f)
+
 def search_products(user_question):
     keywords = user_question.lower().split()
     price_limit = None
@@ -16,39 +25,34 @@ def search_products(user_question):
     price_match = re.findall(r'\$?(\d+)', user_question)
     if price_match:
         price_limit = float(price_match[0])
-        print(f"💲 Price limit: ${price_limit}")
 
     matches = []
     for p in products:
         name = p["name"].lower()
 
-        # 🛠 Handle price parsing
         try:
             price = float(re.findall(r'\d+\.?\d*', p["price"])[0])
         except (ValueError, IndexError):
             price = None
 
         keyword_match = any(word in name for word in keywords)
-        price_match = price is not None and (price_limit is None or price <= price_limit)
+        price_match_ok = price is not None and (price_limit is None or price <= price_limit)
 
-        if keyword_match or price_match:
+        if keyword_match or price_match_ok:
             matches.append(p)
 
     return matches[:5]
 
-def chatbot():
-    print("💬 Ask me something (type 'exit' to quit).")
-    while True:
-        user_input = input("You: ")
-        if user_input.lower() in ['exit', 'quit']:
-            print("👋 Goodbye!")
-            break
-        results = search_products(user_input)
-        if results:
-            print("Bot: Here are some things you might like:")
-            for item in results:
-                print(f"- {item['name']} ({item['price']}) → {item['link']}")
-        else:
-            print("Bot: Hmm... I couldn't find anything that matches. Try a different keyword?")
+@app.post("/chat")
+async def chat(request: Request):
+    data = await request.json()
+    question = data.get("message", "")
+    results = search_products(question)
 
-chatbot()
+    if not results:
+        return {"reply": "Sorry, I couldn't find anything that matches. Try a different question?"}
+
+    reply = "Here are some things you might like:\n"
+    for item in results:
+        reply += f"- {item['name']} ({item['price']}) → {item['link']}\n"
+    return {"reply": reply}
